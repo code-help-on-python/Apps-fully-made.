@@ -10,21 +10,43 @@ const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
 const KDF_ITERS = 200000;
 
-// 🔒 Domain lock (edit this!)
+const ALLOWED_HOSTS = [
+  "code-help-on-python.github.io",
+  "localhost",
+  "127.0.0.1",
+];
+
+const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
+
 const isLocal =
   location.hostname === "localhost" ||
   location.hostname === "127.0.0.1";
 
 const isGithubPages =
   location.hostname === "code-help-on-python.github.io" &&
-  location.pathname.startsWith(ALLOWED_PATH_PREFIX);
+  (
+    location.pathname === ALLOWED_PATH_PREFIX ||
+    location.pathname.startsWith(ALLOWED_PATH_PREFIX + "/")
+  );
 
 const licensed = isLocal || isGithubPages;
 
 if (!licensed) {
-  // lock the app
-}
+  // 🔒 lock the app
+  [decryptBtn, encryptBtn, copyBtn, copyEncBtn, clearBtn, clearEncBtn]
+    .forEach(b => b && (b.disabled = true));
 
+  setStatus(
+    "Unlicensed domain or path. This tool runs only on the official site.",
+    "err"
+  );
+  setStatusEnc(
+    "Unlicensed domain or path. This tool runs only on the official site.",
+    "err"
+  );
+
+  show(originModal);
+}
 
 
 const LS_THEME = "cryptoshield-theme";
