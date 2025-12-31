@@ -12,15 +12,9 @@ const KDF_ITERS = 200000;
 
 const ALLOWED_HOSTS = [
   "code-help-on-python.github.io",
-  "localhost",
-  "127.0.0.1",
 ];
 
 const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
-
-const isLocal =
-  location.hostname === "localhost" ||
-  location.hostname === "127.0.0.1";
 
 const isGithubPages =
   location.hostname === "code-help-on-python.github.io" &&
@@ -236,14 +230,26 @@ async function decryptPayload(passphrase, payload) {
   }
 
   const salt = payloadBytes.slice(MAGIC.length, MAGIC.length + SALT_LEN);
-  const tokenBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
-
-  // tokenBytes are ASCII of the fernet base64url token string
-  const tokenStr = bytesToAscii(tokenBytes);
-  const tokenCandidates = [base64urlToBytes(tokenStr)];
+  c  const tokenBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
 
   const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
   let lastErr = null;
+
+  // ✅ Try both possible encodings for the inner Fernet token:
+  const tokenCandidates = [];
+
+  // A) If stored as raw Fernet bytes, it starts with 0x80 (Fernet version byte)
+  if (tokenBytes.length > 0 && tokenBytes[0] === 0x80) {
+    tokenCandidates.push(tokenBytes);
+  }
+
+  // B) If stored as ASCII text (base64url string), decode it
+  try {
+    const tokenStr = new TextDecoder().decode(tokenBytes).trim();
+    if (tokenStr) tokenCandidates.push(base64urlToBytes(tokenStr));
+  } catch (_) {
+    // ignore
+  }
 
   for (const tokenRaw of tokenCandidates) {
     try {
@@ -259,7 +265,7 @@ async function decryptPayload(passphrase, payload) {
 
   if (lastErr) throw lastErr;
   throw new Error("Wrong passphrase or corrupted token.");
-}
+
 
 async function encryptPayload(passphrase, plaintext) {
   if (!passphrase) throw new Error("Passphrase is required.");
