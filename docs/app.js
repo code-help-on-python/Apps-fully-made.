@@ -11,16 +11,20 @@ const SALT_LEN = 16;
 const KDF_ITERS = 200000;
 
 // 🔒 Domain lock (edit this!)
-const ALLOWED_HOSTS = ["code-help-on-python.github.io", "localhost", "127.0.0.1"];
-const ALLOWED_PATH_PREFIX = "/Crypto-tool/";
+const isLocal =
+  location.hostname === "localhost" ||
+  location.hostname === "127.0.0.1";
 
-const licensed =
-  ALLOWED_HOSTS.includes(location.hostname) &&
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.pathname.startsWith(ALLOWED_PATH_PREFIX));
+const isGithubPages =
+  location.hostname === "code-help-on-python.github.io" &&
+  location.pathname.startsWith(ALLOWED_PATH_PREFIX);
+
+const licensed = isLocal || isGithubPages;
 
 if (!licensed) {
   // lock the app
 }
+
 
 
 const LS_THEME = "cryptoshield-theme";
