@@ -8,7 +8,7 @@
 
 const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
-const KDF_ITERS = 200000;
+const KDF_ITERS = 200;
 
 const ALLOWED_HOSTS = [
   "code-help-on-python.github.io",
