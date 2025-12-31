@@ -250,13 +250,19 @@ async function decryptPayload(passphrase, payload) {
   const tokenTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
   const tokenText = new TextDecoder().decode(tokenTextBytes).trim();
 
-  // Decode Fernet base64 text → raw bytes
+  // Extract Fernet token *text*
+  const tokenTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
+  const tokenText = new TextDecoder().decode(tokenTextBytes).trim();
+
+  // Decode base64url Fernet text → raw Fernet bytes
   const tokenRaw = base64urlToBytes(tokenText);
+
+  // Now parse raw Fernet token
+  const { iv, ciphertext, dataToSign, hmac } = parseFernetToken(tokenRaw);
 
 
   const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
 
-  const { iv, ciphertext, dataToSign, hmac } = parseFernetToken(tokenRaw);
   const ok = await verifyHmac(signingKey, dataToSign, hmac);
   if (!ok) throw new Error("Wrong passphrase or corrupted token.");
 
