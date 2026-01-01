@@ -24,7 +24,7 @@ const SALT_LEN = 16;
 const KDF_ITERS = 200000; // ✅ MUST match Python (200_000)
 
 // Optional domain lock (deterrent)
-const ALLOWED_HOSTS = ["code-help-on-python.github.io", "localhost", "127.0.0.1"];
+const ALLOWED_HOSTS = ["code-help-on-python.github.io"];
 const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
 
 // --- Elements ---
