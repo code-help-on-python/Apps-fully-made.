@@ -12,7 +12,7 @@
 const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
 
-// ✅ MUST match your Python backend (per your uploaded backend)
+// ✅ MUST match your Python backend
 const KDF_ITERS = 200;
 
 /* =========================
@@ -95,7 +95,7 @@ function setTheme(theme) {
 
 /* =========================
    BASE64 URL HELPERS
-   ✅ Python-compatible (keeps '=')
+   ✅ Python-compatible (keeps '=' padding)
 ========================= */
 function base64urlToBytes(str) {
   const cleaned = (str || "").replace(/\s+/g, "");
@@ -151,7 +151,7 @@ async function deriveKeys(passphrase, salt) {
     256
   );
   const keyBytes = new Uint8Array(bits);
-  // Fernet wants signing (16) + encryption (16) in this implementation
+  // Fernet uses 16-byte signing key and 16-byte encryption key
   return { signingKey: keyBytes.slice(0, 16), encryptionKey: keyBytes.slice(16, 32) };
 }
 
@@ -161,14 +161,14 @@ async function verifyHmac(signingKey, data, expected) {
   return constantTimeEqual(sig, expected);
 }
 
-async function decryptAesCbc(encryptionKey, iv, ciphertext) {
+async function decryptFernet(encryptionKey, iv, ciphertext) {
   const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["decrypt"]);
   const padded = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-CBC", iv }, key, ciphertext));
   return pkcs7Unpad(padded);
 }
 
 function parseFernetToken(tokenRaw) {
-  // version(1) + ts(8) + iv(16) + hmac(32) minimal, ciphertext can be empty but realistically not
+  // minimal length: ver(1)+ts(8)+iv(16)+hmac(32)
   if (tokenRaw.length < 1 + 8 + 16 + 32) throw new Error("Invalid token format.");
   const version = tokenRaw[0];
   if (version !== 0x80) throw new Error("Invalid token version.");
@@ -188,8 +188,8 @@ async function encryptFernet(encryptionKey, signingKey, plaintextBytes) {
   const iv = crypto.getRandomValues(new Uint8Array(16));
   const padded = pkcs7Pad(plaintextBytes);
 
-  const aesKey = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["encrypt"]);
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, aesKey, padded));
+  const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["encrypt"]);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, key, padded));
 
   const timestamp = Math.floor(Date.now() / 1000);
   let ts = BigInt(timestamp);
@@ -209,13 +209,13 @@ async function encryptFernet(encryptionKey, signingKey, plaintextBytes) {
   tokenRaw.set(dataToSign);
   tokenRaw.set(hmac, dataToSign.length);
 
-  // NOTE: This returns the RAW Fernet token bytes (not base64 text).
-  return tokenRaw;
+  return tokenRaw; // raw bytes (version=0x80 ...)
 }
 
 /* =========================
    PAYLOAD FORMAT (BACKEND)
-   ✅ base64url( MAGIC + salt(16) + fernet_raw_bytes )
+   ✅ base64url( MAGIC + salt(16) + fernet_token_BASE64URL_TEXT_BYTES )
+   (inner token is text like: "gAAAAA...")
 ========================= */
 async function encryptPayload(passphrase, plaintext) {
   if (!passphrase) throw new Error("Passphrase is required.");
@@ -226,10 +226,14 @@ async function encryptPayload(passphrase, plaintext) {
 
   const fernetRaw = await encryptFernet(encryptionKey, signingKey, new TextEncoder().encode(plaintext));
 
-  const payload = new Uint8Array(MAGIC.length + SALT_LEN + fernetRaw.length);
+  // Backend stores Fernet token as BASE64URL TEXT
+  const fernetText = bytesToBase64Url(fernetRaw);            // "gAAAAA..."
+  const fernetTextBytes = new TextEncoder().encode(fernetText);
+
+  const payload = new Uint8Array(MAGIC.length + SALT_LEN + fernetTextBytes.length);
   payload.set(MAGIC, 0);
   payload.set(salt, MAGIC.length);
-  payload.set(fernetRaw, MAGIC.length + SALT_LEN);
+  payload.set(fernetTextBytes, MAGIC.length + SALT_LEN);
 
   return bytesToBase64Url(payload);
 }
@@ -239,7 +243,7 @@ async function decryptPayload(passphrase, payload) {
   if (!payload) throw new Error("Token is required.");
 
   const payloadBytes = base64urlToBytes(payload);
-  if (payloadBytes.length < MAGIC.length + SALT_LEN + (1 + 8 + 16 + 32)) throw new Error("Invalid token format.");
+  if (payloadBytes.length < MAGIC.length + SALT_LEN + 1) throw new Error("Invalid token format.");
 
   // Verify MAGIC
   for (let i = 0; i < MAGIC.length; i += 1) {
@@ -247,26 +251,21 @@ async function decryptPayload(passphrase, payload) {
   }
 
   const salt = payloadBytes.slice(MAGIC.length, MAGIC.length + SALT_LEN);
-  const tokenTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
-  const tokenText = new TextDecoder().decode(tokenTextBytes).trim();
 
-  // Extract Fernet token *text*
-  const tokenTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
-  const tokenText = new TextDecoder().decode(tokenTextBytes).trim();
+  // ✅ Backend stores inner Fernet token as text bytes.
+  const innerTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
+  const innerTokenText = new TextDecoder().decode(innerTextBytes).trim();
 
-  // Decode base64url Fernet text → raw Fernet bytes
-  const tokenRaw = base64urlToBytes(tokenText);
-
-  // Now parse raw Fernet token
-  const { iv, ciphertext, dataToSign, hmac } = parseFernetToken(tokenRaw);
-
+  // Decode Fernet base64url text -> raw bytes (must begin with 0x80)
+  const innerTokenRaw = base64urlToBytes(innerTokenText);
 
   const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
 
+  const { iv, ciphertext, dataToSign, hmac } = parseFernetToken(innerTokenRaw);
   const ok = await verifyHmac(signingKey, dataToSign, hmac);
   if (!ok) throw new Error("Wrong passphrase or corrupted token.");
 
-  const plaintextBytes = await decryptAesCbc(encryptionKey, iv, ciphertext);
+  const plaintextBytes = await decryptFernet(encryptionKey, iv, ciphertext);
   return new TextDecoder().decode(plaintextBytes);
 }
 
@@ -410,12 +409,10 @@ if (firstModal) {
 }
 
 /* =========================
-   ✅ DOMAIN LOCK (RUNS AFTER EVERYTHING EXISTS)
+   DOMAIN LOCK (RUNS AFTER ELEMENTS)
 ========================= */
 function isLicensed() {
-  // allow only your GH Pages + correct repo path
   if (location.hostname !== ALLOWED_HOST) return false;
-
   return (
     location.pathname === ALLOWED_PATH_PREFIX ||
     location.pathname.startsWith(ALLOWED_PATH_PREFIX + "/")
@@ -438,7 +435,7 @@ document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 document.addEventListener("keydown", (e) => {
   const key = String(e.key || "").toLowerCase();
-  const ctrl = e.ctrlKey || e.metaKey; // Ctrl (Win/Linux) / Cmd (macOS)
+  const ctrl = e.ctrlKey || e.metaKey;
 
   const blocked =
     key === "f12" ||
