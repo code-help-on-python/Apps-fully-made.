@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Client-side CryptoShield encrypt/decrypt for CSP1 tokens. No server, no upload." />
 
-    <!-- Hardening only (does not hide source) -->
+    <!-- CSP hardening (deterrent, not source protection) -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
                    script-src 'self';
@@ -13,7 +13,6 @@
                    img-src 'self' data:;
                    base-uri 'none';
                    object-src 'none';
-                   frame-ancestors 'none';
                    connect-src 'none'">
 
     <title>CryptoShield Web</title>
@@ -111,8 +110,8 @@
         <details class="help">
           <summary>Format details</summary>
           <p>
-            Token format: <code>base64url("CSP1" + 16-byte salt + Fernet token)</code>.
-            Key derivation: PBKDF2-HMAC-SHA256 (200,000 iterations). Encryption: Fernet (AES-128-CBC + HMAC-SHA256).
+            Format: <code>base64url("CSP1" + 16-byte salt + fernet_token_bytes)</code>.
+            KDF: PBKDF2-HMAC-SHA256 (<strong>200,000</strong> iters). Fernet: AES-128-CBC + HMAC-SHA256.
           </p>
         </details>
 
@@ -125,10 +124,6 @@
       </section>
     </main>
 
-    <noscript>
-      <div class="noscript">This app requires JavaScript to run.</div>
-    </noscript>
-
     <!-- About modal -->
     <div id="modal-about" class="modal-backdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
@@ -137,41 +132,11 @@
           <button id="about-close" class="ghost small" type="button">Close</button>
         </div>
         <p>CryptoShield Web is a client-side encrypt/decrypt tool.</p>
-        <div class="notice">
-          <strong>⚠️ Proprietary Software Notice</strong>
-          <p>This tool is licensed for use exclusively through this webpage.</p>
-          <p>Copying, inspecting, reusing, or redistributing the source code is prohibited.</p>
-        </div>
         <p class="muted">Nothing is uploaded. All processing happens in your browser.</p>
       </div>
     </div>
 
-    <!-- First-run notice -->
-    <div id="modal-first" class="modal-backdrop" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="first-title">
-        <div class="modal-head">
-          <h3 id="first-title">Before You Continue</h3>
-        </div>
-        <div class="notice">
-          <strong>⚠️ Proprietary Software Notice</strong>
-          <p>This tool is provided for use exclusively through this webpage.</p>
-          <p>Copying, inspecting, reusing, or redistributing the source code is prohibited.</p>
-        </div>
-        <button id="first-accept" class="primary" type="button">I Understand</button>
-      </div>
-    </div>
-
-    <!-- Devtools warning (deterrent only) -->
-    <div id="devtools-warning" class="modal-backdrop" hidden>
-      <div class="modal warning" role="dialog" aria-modal="true" aria-labelledby="devtools-title">
-        <div class="modal-head">
-          <h3 id="devtools-title">Developer Tools Detected</h3>
-        </div>
-        <p>Developer tools are not permitted for this page.</p>
-      </div>
-    </div>
-
-    <!-- Domain lock -->
+    <!-- Domain lock modal -->
     <div id="origin-lock" class="modal-backdrop" hidden>
       <div class="modal warning" role="dialog" aria-modal="true" aria-labelledby="origin-title">
         <div class="modal-head">
