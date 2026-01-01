@@ -24,8 +24,17 @@ const SALT_LEN = 16;
 const KDF_ITERS = 200000; // ✅ MUST match Python (200_000)
 
 // Optional domain lock (deterrent)
-const ALLOWED_HOSTS = ["code-help-on-python.github.io"];
-const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
+const ALLOWED_HOST = "code-help-on-python.github.io";
+const ALLOWED_PATH_PREFIX = "/Crypto-tool";
+
+function isLicensed() {
+  if (location.hostname !== ALLOWED_HOST) return false;
+
+  // Normalize trailing slash
+  const path = location.pathname.replace(/\/+$/, "");
+
+  return path === ALLOWED_PATH_PREFIX || path.startsWith(ALLOWED_PATH_PREFIX + "/");
+}
 
 // --- Elements ---
 const passphraseDecrypt = document.getElementById("passphrase-decrypt");
