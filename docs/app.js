@@ -24,22 +24,14 @@ const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
 const KDF_ITERS = 200000; // MUST match Python (200_000)
 
-// ---- Domain lock (deterrent only) ----
 const OFFICIAL_HOST = "code-help-on-python.github.io";
-const OFFICIAL_REPO = "Crypto-tool"; // repo name in URL
+const OFFICIAL_REPO = "Crypto-tool";
 
 function isLicensedOrigin() {
   if (location.hostname !== OFFICIAL_HOST) return false;
 
-  // Normalize GitHub Pages path variants:
-  //   /Crypto-tool
-  //   /Crypto-tool/
-  //   /Crypto-tool/index.html
-  const path = location.pathname
-    .replace(/\/index\.html$/i, "")
-    .replace(/\/+$/g, "");
-
-  return path === `/${OFFICIAL_REPO}` || path.startsWith(`/${OFFICIAL_REPO}/`);
+  // Accept ANY page under the repo
+  return location.pathname.startsWith(`/${OFFICIAL_REPO}`);
 }
 
 // ---- Storage / theme ----
