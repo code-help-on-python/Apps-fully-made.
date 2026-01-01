@@ -6,30 +6,22 @@
 
 "use strict";
 
-/* =========================
-   BACKEND-COMPAT CONSTANTS
-========================= */
+// === Python backend compatibility ===
+// Python uses: MAGIC=b"CSP1", SALT_LEN=16, KDF_ITERS=200_000
+// payload = base64url( MAGIC + salt + fernet_token_bytes )
+// where fernet_token_bytes is ASCII of Fernet token (already base64url)
 const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
+const KDF_ITERS = 200000; // ✅ MUST match Python backend (200_000)
 
-// ✅ MUST match your Python backend
-const KDF_ITERS = 200;
-
-/* =========================
-   DOMAIN LOCK CONFIG
-========================= */
-const ALLOWED_HOST = "code-help-on-python.github.io";
+// === Domain lock (edit these) ===
+// For GitHub Pages repo: https://code-help-on-python.github.io/Crypto-tool/
+// location.hostname = "code-help-on-python.github.io"
+// location.pathname starts with "/Crypto-tool/"
+const ALLOWED_HOSTS = ["code-help-on-python.github.io", "localhost", "127.0.0.1"];
 const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
 
-/* =========================
-   LOCAL STORAGE
-========================= */
-const LS_THEME = "cryptoshield-theme";
-const LS_ACCEPTED = "cryptoshield-accepted-v1";
-
-/* =========================
-   ELEMENTS
-========================= */
+// --- Elements ---
 const passphraseDecrypt = document.getElementById("passphrase-decrypt");
 const tokenInput = document.getElementById("token");
 const outputBox = document.getElementById("output");
@@ -62,11 +54,11 @@ const firstAccept = document.getElementById("first-accept");
 const devtoolsModal = document.getElementById("devtools-warning");
 const originModal = document.getElementById("origin-lock");
 
-/* =========================
-   UI HELPERS
-========================= */
 function show(el) { if (el) el.hidden = false; }
 function hide(el) { if (el) el.hidden = true; }
+
+const LS_THEME = "cryptoshield-theme";
+const LS_ACCEPTED = "cryptoshield-accepted-v1";
 
 function safeLSGet(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -76,11 +68,13 @@ function safeLSSet(key, val) {
 }
 
 function setStatus(text, type) {
+  if (!statusEl) return;
   statusEl.textContent = text;
   statusEl.classList.remove("ok", "err");
   if (type) statusEl.classList.add(type);
 }
 function setStatusEnc(text, type) {
+  if (!statusEncEl) return;
   statusEncEl.textContent = text;
   statusEncEl.classList.remove("ok", "err");
   if (type) statusEncEl.classList.add(type);
@@ -93,10 +87,7 @@ function setTheme(theme) {
   safeLSSet(LS_THEME, normalized);
 }
 
-/* =========================
-   BASE64 URL HELPERS
-   ✅ Python-compatible (keeps '=' padding)
-========================= */
+// --- Base64 helpers ---
 function base64urlToBytes(str) {
   const cleaned = (str || "").replace(/\s+/g, "");
   const b64 = cleaned.replace(/-/g, "+").replace(/_/g, "/");
@@ -106,24 +97,19 @@ function base64urlToBytes(str) {
   for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
   return out;
 }
-
-// ✅ Keep '=' padding (Python urlsafe_b64encode keeps padding)
 function bytesToBase64Url(bytes) {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-/* =========================
-   CRYPTO PRIMITIVES
-========================= */
+// --- Crypto primitives (Fernet-compatible) ---
 function constantTimeEqual(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i];
   return diff === 0;
 }
-
 function pkcs7Unpad(data) {
   if (data.length === 0) throw new Error("Invalid padding.");
   const pad = data[data.length - 1];
@@ -133,7 +119,6 @@ function pkcs7Unpad(data) {
   }
   return data.slice(0, data.length - pad);
 }
-
 function pkcs7Pad(data) {
   const pad = 16 - (data.length % 16);
   const out = new Uint8Array(data.length + pad);
@@ -150,8 +135,8 @@ async function deriveKeys(passphrase, salt) {
     material,
     256
   );
-  const keyBytes = new Uint8Array(bits);
-  // Fernet uses 16-byte signing key and 16-byte encryption key
+  const keyBytes = new Uint8Array(bits); // 32 bytes
+  // Fernet: first 16 = signing key, last 16 = encryption key
   return { signingKey: keyBytes.slice(0, 16), encryptionKey: keyBytes.slice(16, 32) };
 }
 
@@ -161,35 +146,56 @@ async function verifyHmac(signingKey, data, expected) {
   return constantTimeEqual(sig, expected);
 }
 
-async function decryptFernet(encryptionKey, iv, ciphertext) {
+async function decryptAesCbc(encryptionKey, iv, ciphertext) {
   const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["decrypt"]);
   const padded = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-CBC", iv }, key, ciphertext));
   return pkcs7Unpad(padded);
 }
 
-function parseFernetToken(tokenRaw) {
-  // minimal length: ver(1)+ts(8)+iv(16)+hmac(32)
+async function encryptAesCbc(encryptionKey, iv, plaintextBytes) {
+  const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["encrypt"]);
+  const padded = pkcs7Pad(plaintextBytes);
+  return new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, key, padded));
+}
+
+function parseFernetTokenRaw(tokenRaw) {
+  // raw decoded token: ver(1)+ts(8)+iv(16)+ciphertext+HMAC(32)
   if (tokenRaw.length < 1 + 8 + 16 + 32) throw new Error("Invalid token format.");
   const version = tokenRaw[0];
   if (version !== 0x80) throw new Error("Invalid token version.");
-
   const ivStart = 1 + 8;
   const hmacStart = tokenRaw.length - 32;
-
   const iv = tokenRaw.slice(ivStart, ivStart + 16);
   const ciphertext = tokenRaw.slice(ivStart + 16, hmacStart);
   const dataToSign = tokenRaw.slice(0, hmacStart);
   const hmac = tokenRaw.slice(hmacStart);
-
   return { iv, ciphertext, dataToSign, hmac };
 }
 
-async function encryptFernet(encryptionKey, signingKey, plaintextBytes) {
-  const iv = crypto.getRandomValues(new Uint8Array(16));
-  const padded = pkcs7Pad(plaintextBytes);
+// Fernet token bytes are base64url ASCII in Python, so we decode to raw first.
+function fernetAsciiToRaw(fernetAsciiBytes) {
+  const tokenStr = new TextDecoder().decode(fernetAsciiBytes).trim();
+  if (!tokenStr) throw new Error("Invalid token format.");
+  return base64urlToBytes(tokenStr);
+}
 
-  const key = await crypto.subtle.importKey("raw", encryptionKey, { name: "AES-CBC" }, false, ["encrypt"]);
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, key, padded));
+async function decryptFernetRaw(passphrase, fernetAsciiBytes, salt) {
+  const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
+  const tokenRaw = fernetAsciiToRaw(fernetAsciiBytes);
+  const { iv, ciphertext, dataToSign, hmac } = parseFernetTokenRaw(tokenRaw);
+
+  const ok = await verifyHmac(signingKey, dataToSign, hmac);
+  if (!ok) throw new Error("Wrong password or corrupted token.");
+
+  const plaintextBytes = await decryptAesCbc(encryptionKey, iv, ciphertext);
+  return new TextDecoder().decode(plaintextBytes);
+}
+
+async function encryptFernetToAscii(passphrase, plaintextBytes, salt) {
+  const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
+
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const ciphertext = await encryptAesCbc(encryptionKey, iv, plaintextBytes);
 
   const timestamp = Math.floor(Date.now() / 1000);
   let ts = BigInt(timestamp);
@@ -205,85 +211,89 @@ async function encryptFernet(encryptionKey, signingKey, plaintextBytes) {
   const hmacKey = await crypto.subtle.importKey("raw", signingKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const hmac = new Uint8Array(await crypto.subtle.sign("HMAC", hmacKey, dataToSign));
 
-  const tokenRaw = new Uint8Array(dataToSign.length + hmac.length);
-  tokenRaw.set(dataToSign);
-  tokenRaw.set(hmac, dataToSign.length);
+  const rawToken = new Uint8Array(dataToSign.length + hmac.length);
+  rawToken.set(dataToSign);
+  rawToken.set(hmac, dataToSign.length);
 
-  return tokenRaw; // raw bytes (version=0x80 ...)
+  // Fernet token (as Python returns) is base64url ASCII
+  const tokenStr = bytesToBase64Url(rawToken);
+  return new TextEncoder().encode(tokenStr);
 }
 
-/* =========================
-   PAYLOAD FORMAT (BACKEND)
-   ✅ base64url( MAGIC + salt(16) + fernet_token_BASE64URL_TEXT_BYTES )
-   (inner token is text like: "gAAAAA...")
-========================= */
-async function encryptPayload(passphrase, plaintext) {
+// --- Payload handling: EXACTLY matches Python encrypt_text/decrypt_text ---
+async function decryptPayload(passphrase, payloadStr) {
   if (!passphrase) throw new Error("Passphrase is required.");
-  if (!plaintext) throw new Error("Plaintext is required.");
+  if (!payloadStr) throw new Error("Token is required.");
 
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
-  const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
+  const payloadBytes = base64urlToBytes(payloadStr);
 
-  const fernetRaw = await encryptFernet(encryptionKey, signingKey, new TextEncoder().encode(plaintext));
+  if (payloadBytes.length < MAGIC.length + SALT_LEN + 10) {
+    throw new Error("Invalid token format.");
+  }
 
-  // Backend stores Fernet token as BASE64URL TEXT
-  const fernetText = bytesToBase64Url(fernetRaw);            // "gAAAAA..."
-  const fernetTextBytes = new TextEncoder().encode(fernetText);
-
-  const payload = new Uint8Array(MAGIC.length + SALT_LEN + fernetTextBytes.length);
-  payload.set(MAGIC, 0);
-  payload.set(salt, MAGIC.length);
-  payload.set(fernetTextBytes, MAGIC.length + SALT_LEN);
-
-  return bytesToBase64Url(payload);
-}
-
-async function decryptPayload(passphrase, payload) {
-  if (!passphrase) throw new Error("Passphrase is required.");
-  if (!payload) throw new Error("Token is required.");
-
-  const payloadBytes = base64urlToBytes(payload);
-  if (payloadBytes.length < MAGIC.length + SALT_LEN + 1) throw new Error("Invalid token format.");
-
-  // Verify MAGIC
   for (let i = 0; i < MAGIC.length; i += 1) {
     if (payloadBytes[i] !== MAGIC[i]) throw new Error("Invalid token format.");
   }
 
   const salt = payloadBytes.slice(MAGIC.length, MAGIC.length + SALT_LEN);
+  const fernetAsciiBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
 
-  // ✅ Backend stores inner Fernet token as text bytes.
-  const innerTextBytes = payloadBytes.slice(MAGIC.length + SALT_LEN);
-  const innerTokenText = new TextDecoder().decode(innerTextBytes).trim();
-
-  // Decode Fernet base64url text -> raw bytes (must begin with 0x80)
-  const innerTokenRaw = base64urlToBytes(innerTokenText);
-
-  const { signingKey, encryptionKey } = await deriveKeys(passphrase, salt);
-
-  const { iv, ciphertext, dataToSign, hmac } = parseFernetToken(innerTokenRaw);
-  const ok = await verifyHmac(signingKey, dataToSign, hmac);
-  if (!ok) throw new Error("Wrong passphrase or corrupted token.");
-
-  const plaintextBytes = await decryptFernet(encryptionKey, iv, ciphertext);
-  return new TextDecoder().decode(plaintextBytes);
+  try {
+    return await decryptFernetRaw(passphrase, fernetAsciiBytes, salt);
+  } catch (err) {
+    const msg = (err instanceof Error) ? err.message : "Wrong password or corrupted token.";
+    // Normalize all crypto failures to the same safe message
+    if (String(msg).toLowerCase().includes("padding")) throw new Error("Wrong password or corrupted token.");
+    if (String(msg).toLowerCase().includes("version")) throw new Error("Wrong password or corrupted token.");
+    throw new Error("Wrong password or corrupted token.");
+  }
 }
 
-/* =========================
-   UI: TABS
-========================= */
+async function encryptPayload(passphrase, plaintext) {
+  if (!passphrase) throw new Error("Passphrase is required.");
+  if (!plaintext) throw new Error("Plaintext is required.");
+
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const fernetAsciiBytes = await encryptFernetToAscii(passphrase, new TextEncoder().encode(plaintext), salt);
+
+  const payload = new Uint8Array(MAGIC.length + SALT_LEN + fernetAsciiBytes.length);
+  payload.set(MAGIC, 0);
+  payload.set(salt, MAGIC.length);
+  payload.set(fernetAsciiBytes, MAGIC.length + SALT_LEN);
+
+  return bytesToBase64Url(payload);
+}
+
+// --- Licensing / origin lock (deterrent) ---
+function isLicensedOrigin() {
+  // host check
+  if (!ALLOWED_HOSTS.includes(location.hostname)) return false;
+
+  // allow localhost anywhere
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1") return true;
+
+  // path prefix check on GitHub Pages
+  const p = location.pathname || "/";
+  return (p === ALLOWED_PATH_PREFIX || p.startsWith(ALLOWED_PATH_PREFIX + "/"));
+}
+
+function lockAppUI() {
+  [decryptBtn, encryptBtn, copyBtn, copyEncBtn, clearBtn, clearEncBtn].forEach((b) => {
+    if (b) b.disabled = true;
+  });
+}
+
+// --- UI wiring ---
 tabButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabButtons.forEach((b) => {
       b.classList.remove("active");
       b.setAttribute("aria-selected", "false");
     });
-    tabPanels.forEach((panel) => panel.classList.remove("active"));
+    tabPanels.forEach((panel) => { panel.hidden = true; panel.classList.remove("active"); });
 
     btn.classList.add("active");
     btn.setAttribute("aria-selected", "true");
-
-    tabPanels.forEach((panel) => { panel.hidden = true; });
 
     const target = document.getElementById(`tab-${btn.dataset.tab}`);
     if (target) {
@@ -293,14 +303,8 @@ tabButtons.forEach((btn) => {
   });
 });
 
-/* =========================
-   UI: THEME
-========================= */
 themeButtons.forEach((btn) => btn.addEventListener("click", () => setTheme(btn.dataset.theme)));
 
-/* =========================
-   UI: SHOW/HIDE PASS
-========================= */
 togglePassButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     const input = document.getElementById(btn.dataset.target);
@@ -311,82 +315,96 @@ togglePassButtons.forEach((btn) => {
   });
 });
 
-/* =========================
-   UI: ACTIONS
-========================= */
-decryptBtn.addEventListener("click", async () => {
-  setStatus("Decrypting...", "");
-  outputBox.value = "";
-  decryptBtn.disabled = true;
+// Encrypt / Decrypt actions
+if (decryptBtn) {
+  decryptBtn.addEventListener("click", async () => {
+    setStatus("Decrypting...", "");
+    if (outputBox) outputBox.value = "";
+    decryptBtn.disabled = true;
 
-  try {
-    const result = await decryptPayload(passphraseDecrypt.value.trim(), tokenInput.value.trim());
-    outputBox.value = result;
-    setStatus("Decrypted.", "ok");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Decryption failed.";
-    const safeMsg = String(msg).toLowerCase().includes("padding")
-      ? "Wrong passphrase or corrupted token."
-      : msg;
-    setStatus(safeMsg, "err");
-  } finally {
-    decryptBtn.disabled = false;
-  }
-});
+    try {
+      const result = await decryptPayload(
+        (passphraseDecrypt?.value || "").trim(),
+        (tokenInput?.value || "").trim()
+      );
+      if (outputBox) outputBox.value = result;
+      setStatus("Decrypted.", "ok");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Decryption failed.";
+      setStatus(msg, "err");
+    } finally {
+      decryptBtn.disabled = false;
+    }
+  });
+}
 
-copyBtn.addEventListener("click", async () => {
-  if (!outputBox.value.trim()) return setStatus("Nothing to copy.", "err");
-  try {
-    await navigator.clipboard.writeText(outputBox.value);
-    setStatus("Copied to clipboard.", "ok");
-  } catch (_) {
-    setStatus("Copy failed. Please copy manually.", "err");
-  }
-});
+if (encryptBtn) {
+  encryptBtn.addEventListener("click", async () => {
+    setStatusEnc("Encrypting...", "");
+    if (tokenOut) tokenOut.value = "";
+    encryptBtn.disabled = true;
 
-clearBtn.addEventListener("click", () => {
-  passphraseDecrypt.value = "";
-  tokenInput.value = "";
-  outputBox.value = "";
-  setStatus("Cleared.", "");
-});
+    try {
+      const token = await encryptPayload(
+        (passphraseEncrypt?.value || "").trim(),
+        (plaintextInput?.value || "").trim()
+      );
+      if (tokenOut) tokenOut.value = token;
+      setStatusEnc("Encrypted.", "ok");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Encryption failed.";
+      setStatusEnc(msg, "err");
+    } finally {
+      encryptBtn.disabled = false;
+    }
+  });
+}
 
-encryptBtn.addEventListener("click", async () => {
-  setStatusEnc("Encrypting...", "");
-  tokenOut.value = "";
-  encryptBtn.disabled = true;
+if (copyBtn) {
+  copyBtn.addEventListener("click", async () => {
+    const txt = (outputBox?.value || "").trim();
+    if (!txt) return setStatus("Nothing to copy.", "err");
+    try {
+      await navigator.clipboard.writeText(txt);
+      setStatus("Copied to clipboard.", "ok");
+    } catch (_) {
+      setStatus("Copy failed. Please copy manually.", "err");
+    }
+  });
+}
 
-  try {
-    const token = await encryptPayload(passphraseEncrypt.value.trim(), plaintextInput.value.trim());
-    tokenOut.value = token;
-    setStatusEnc("Encrypted.", "ok");
-  } catch (err) {
-    setStatusEnc(err instanceof Error ? err.message : "Encryption failed.", "err");
-  } finally {
-    encryptBtn.disabled = false;
-  }
-});
+if (copyEncBtn) {
+  copyEncBtn.addEventListener("click", async () => {
+    const txt = (tokenOut?.value || "").trim();
+    if (!txt) return setStatusEnc("Nothing to copy.", "err");
+    try {
+      await navigator.clipboard.writeText(txt);
+      setStatusEnc("Copied to clipboard.", "ok");
+    } catch (_) {
+      setStatusEnc("Copy failed. Please copy manually.", "err");
+    }
+  });
+}
 
-copyEncBtn.addEventListener("click", async () => {
-  if (!tokenOut.value.trim()) return setStatusEnc("Nothing to copy.", "err");
-  try {
-    await navigator.clipboard.writeText(tokenOut.value);
-    setStatusEnc("Copied to clipboard.", "ok");
-  } catch (_) {
-    setStatusEnc("Copy failed. Please copy manually.", "err");
-  }
-});
+if (clearBtn) {
+  clearBtn.addEventListener("click", () => {
+    if (passphraseDecrypt) passphraseDecrypt.value = "";
+    if (tokenInput) tokenInput.value = "";
+    if (outputBox) outputBox.value = "";
+    setStatus("Cleared.", "");
+  });
+}
 
-clearEncBtn.addEventListener("click", () => {
-  passphraseEncrypt.value = "";
-  plaintextInput.value = "";
-  tokenOut.value = "";
-  setStatusEnc("Cleared.", "");
-});
+if (clearEncBtn) {
+  clearEncBtn.addEventListener("click", () => {
+    if (passphraseEncrypt) passphraseEncrypt.value = "";
+    if (plaintextInput) plaintextInput.value = "";
+    if (tokenOut) tokenOut.value = "";
+    setStatusEnc("Cleared.", "");
+  });
+}
 
-/* =========================
-   UI: MODALS
-========================= */
+// --- Modals ---
 if (aboutOpen && aboutModal) aboutOpen.addEventListener("click", () => show(aboutModal));
 if (aboutClose && aboutModal) aboutClose.addEventListener("click", () => hide(aboutModal));
 if (aboutModal) {
@@ -408,29 +426,7 @@ if (firstModal) {
   if (accepted !== "yes") show(firstModal);
 }
 
-/* =========================
-   DOMAIN LOCK (RUNS AFTER ELEMENTS)
-========================= */
-function isLicensed() {
-  if (location.hostname !== ALLOWED_HOST) return false;
-  return (
-    location.pathname === ALLOWED_PATH_PREFIX ||
-    location.pathname.startsWith(ALLOWED_PATH_PREFIX + "/")
-  );
-}
-
-if (originModal && !isLicensed()) {
-  show(originModal);
-  [decryptBtn, encryptBtn, copyBtn, copyEncBtn, clearBtn, clearEncBtn].forEach((b) => {
-    if (b) b.disabled = true;
-  });
-  setStatus("Unlicensed domain or path. This tool runs only on the official site.", "err");
-  setStatusEnc("Unlicensed domain or path. This tool runs only on the official site.", "err");
-}
-
-/* =========================
-   DETERRENTS (NOT REAL SECURITY)
-========================= */
+// --- Deterrents (NOT real protection) ---
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 document.addEventListener("keydown", (e) => {
@@ -467,10 +463,16 @@ setInterval(() => {
   }
 }, 800);
 
-/* =========================
-   BOOT
-========================= */
+// --- Boot ---
 setTheme(safeLSGet(LS_THEME) === "dark" ? "dark" : "light");
 
 const activeTab = document.querySelector(".tab.active");
 if (activeTab) activeTab.click();
+
+// Apply origin lock AFTER boot (so no reference-before-declare issues)
+if (!isLicensedOrigin()) {
+  lockAppUI();
+  setStatus("Unlicensed domain or path. This tool runs only on the official site.", "err");
+  setStatusEnc("Unlicensed domain or path. This tool runs only on the official site.", "err");
+  show(originModal);
+}
