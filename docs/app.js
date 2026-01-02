@@ -10,13 +10,15 @@ const MAGIC = new TextEncoder().encode("CSP1");
 const SALT_LEN = 16;
 const KDF_ITERS = 200000;
 
-// 🔒 Domain lock (edit this!)
+// Domain lock (edit this!)
 const ALLOWED_HOSTS = [
+  "code-help-on-python.github.io",
   "localhost",
   "127.0.0.1",
   // Example: "chanithacri.github.io",
   // Example: "your-custom-domain.com",
 ];
+const ALLOWED_PATH_PREFIX = "/Crypto-tool"; // no trailing slash
 
 const LS_THEME = "cryptoshield-theme";
 const LS_ACCEPTED = "cryptoshield-accepted-v1";
@@ -377,11 +379,33 @@ if (firstModal) {
 
 // --- Domain lock ---
 function isLicensedDomain() {
+  const normalizeHost = (value) => String(value || "").replace(/\.$/, "").toLowerCase();
+  const normalizePath = (value) => {
+    let path = String(value || "/");
+    try { path = decodeURIComponent(path); } catch (_) {}
+    path = path
+      .replace(/\/index\.html$/i, "")
+      .replace(/\/+$/g, "")
+      .toLowerCase();
+    return path === "" ? "/" : path;
+  };
+
+  const host = normalizeHost(location.hostname);
+  const allowedHosts = ALLOWED_HOSTS.map(normalizeHost);
+
   // If ALLOWED_HOSTS only has localhost entries, treat it as "not configured yet".
-  const configured = ALLOWED_HOSTS.some((h) => h !== "localhost" && h !== "127.0.0.1");
+  const configured = allowedHosts.some((h) => h !== "localhost" && h !== "127.0.0.1");
   if (!configured) return true;
 
-  return ALLOWED_HOSTS.includes(location.hostname);
+  if (!allowedHosts.includes(host)) return false;
+  if (host === "localhost" || host === "127.0.0.1") return true;
+
+  let prefix = normalizePath(ALLOWED_PATH_PREFIX);
+  if (!prefix.startsWith("/")) prefix = `/${prefix}`;
+  if (prefix === "/") return true;
+
+  const path = normalizePath(location.pathname);
+  return path === prefix || path.startsWith(`${prefix}/`);
 }
 
 if (originModal && !isLicensedDomain()) {
