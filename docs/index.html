@@ -3,27 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Client-side CryptoShield encrypt/decrypt for CSP1 tokens. No server, no upload."
-    />
+    <meta name="description" content="Client-side CryptoShield encrypt/decrypt for CSP1 tokens. No server, no upload." />
 
-    <!-- Hardening only (does not hide source code) -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self';
-               script-src 'self';
-               style-src 'self';
-               img-src 'self' data:;
-               base-uri 'none';
-               object-src 'none';
-               connect-src 'none'"
-    />
+    <!--
+      NOTE: This is a static GitHub Pages site. Any front-end code shipped to a browser can be viewed.
+      The CSP below is for hardening, not for hiding the source.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; connect-src 'none'">
 
     <title>CryptoShield Web</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-
   <body>
     <main class="page">
       <section class="panel" aria-label="CryptoShield Web">
@@ -54,7 +45,6 @@
           <button class="tab" data-tab="decrypt" role="tab" aria-selected="false">Decrypt</button>
         </div>
 
-        <!-- Decrypt -->
         <div id="tab-decrypt" class="grid tab-panel" hidden>
           <div class="field">
             <label for="passphrase-decrypt">Passphrase</label>
@@ -70,9 +60,9 @@
           </div>
 
           <div class="actions full">
-            <button id="decrypt" class="primary" type="button">Decrypt</button>
-            <button id="copy" class="ghost" type="button">Copy Output</button>
-            <button id="clear" class="ghost" type="button">Clear</button>
+            <button id="decrypt" class="primary">Decrypt</button>
+            <button id="copy" class="ghost">Copy Output</button>
+            <button id="clear" class="ghost">Clear</button>
           </div>
 
           <div class="field full">
@@ -83,7 +73,6 @@
           <div id="status" class="status full">Ready.</div>
         </div>
 
-        <!-- Encrypt -->
         <div id="tab-encrypt" class="grid tab-panel active">
           <div class="field">
             <label for="passphrase-encrypt">Passphrase</label>
@@ -99,9 +88,9 @@
           </div>
 
           <div class="actions full">
-            <button id="encrypt" class="primary" type="button">Encrypt</button>
-            <button id="copy-encrypt" class="ghost" type="button">Copy Token</button>
-            <button id="clear-encrypt" class="ghost" type="button">Clear</button>
+            <button id="encrypt" class="primary">Encrypt</button>
+            <button id="copy-encrypt" class="ghost">Copy Token</button>
+            <button id="clear-encrypt" class="ghost">Clear</button>
           </div>
 
           <div class="field full">
@@ -115,9 +104,8 @@
         <details class="help">
           <summary>Format details</summary>
           <p>
-            Format: <code>base64url("CSP1" + 16-byte salt + fernet_token_bytes)</code>.
-            KDF: PBKDF2-HMAC-SHA256 (<strong>200,000</strong> iters).
-            Fernet: AES-128-CBC + HMAC-SHA256.
+            Token format: <code>base64url("CSP1" + 16-byte salt + fernet_token_string_bytes)</code>.
+            Key derivation: PBKDF2-HMAC-SHA256 (200,000 iterations). Encryption: Fernet (AES-128-CBC + HMAC-SHA256).
           </p>
         </details>
 
@@ -130,6 +118,12 @@
       </section>
     </main>
 
+    <noscript>
+      <div class="noscript">
+        This app requires JavaScript to run.
+      </div>
+    </noscript>
+
     <!-- About modal -->
     <div id="modal-about" class="modal-backdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
@@ -138,11 +132,41 @@
           <button id="about-close" class="ghost small" type="button">Close</button>
         </div>
         <p>CryptoShield Web is a client-side encrypt/decrypt tool.</p>
+        <div class="notice">
+          <strong>⚠️ Proprietary Software Notice</strong>
+          <p>This tool is licensed for use exclusively through this webpage.</p>
+          <p>Copying, inspecting, reusing, or redistributing the source code is prohibited.</p>
+        </div>
         <p class="muted">Nothing is uploaded. All processing happens in your browser.</p>
       </div>
     </div>
 
-    <!-- Domain lock modal (deterrent only) -->
+    <!-- First-run notice -->
+    <div id="modal-first" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="first-title">
+        <div class="modal-head">
+          <h3 id="first-title">Before You Continue</h3>
+        </div>
+        <div class="notice">
+          <strong>⚠️ Proprietary Software Notice</strong>
+          <p>This tool is provided for use exclusively through this webpage.</p>
+          <p>Copying, inspecting, reusing, or redistributing the source code is prohibited.</p>
+        </div>
+        <button id="first-accept" class="primary" type="button">I Understand</button>
+      </div>
+    </div>
+
+    <!-- Devtools warning (deterrent only) -->
+    <div id="devtools-warning" class="modal-backdrop" hidden>
+      <div class="modal warning" role="dialog" aria-modal="true" aria-labelledby="devtools-title">
+        <div class="modal-head">
+          <h3 id="devtools-title">Developer Tools Detected</h3>
+        </div>
+        <p>Developer tools are not permitted for this page.</p>
+      </div>
+    </div>
+
+    <!-- Domain lock -->
     <div id="origin-lock" class="modal-backdrop" hidden>
       <div class="modal warning" role="dialog" aria-modal="true" aria-labelledby="origin-title">
         <div class="modal-head">
@@ -152,6 +176,6 @@
       </div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="docs/app.js"></script>
   </body>
 </html>
