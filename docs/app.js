@@ -28,22 +28,24 @@ const OFFICIAL_REPO = "crypto-tool"; // stored lower-case for case-insensitive c
 
 function isLicensedOrigin() {
   // Normalize host to handle case-insensitive matches or trailing dots.
+  const officialHost = OFFICIAL_HOST.replace(/\.$/, "").toLowerCase();
   const host = location.hostname.replace(/\.$/, "").toLowerCase();
-  if (host !== OFFICIAL_HOST) return false;
+  if (host !== officialHost) return false;
 
   // Normalize path: ignore query/hash, trailing slashes, and case.
   // Allow both the repo subpath (project page) and site root (user/org page).
-  const path = location.pathname
+  const repo = OFFICIAL_REPO.replace(/^\/|\/$/g, "").toLowerCase();
+  let path = location.pathname || "/";
+  try { path = decodeURIComponent(path); } catch (_) {}
+  path = path
     .replace(/\/index\.html$/i, "")
     .replace(/\/+$/g, "")
     .toLowerCase();
 
-  return (
-    path === "" ||
-    path === "/" ||
-    path === `/${OFFICIAL_REPO}` ||
-    path.startsWith(`/${OFFICIAL_REPO}/`)
-  );
+  if (path === "" || path === "/") return true;
+
+  const repoRoot = `/${repo}`;
+  return path === repoRoot || path.startsWith(`${repoRoot}/`);
 }
 
 // ---- Storage / theme ----
